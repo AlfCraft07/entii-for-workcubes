@@ -868,6 +868,8 @@ static void EnchantIOP(void) {
 		0xe3a01000, // mov r1, #0 ; USER_ID_ROOT
 		0xe6000570, // syscall IOS_SetUid
 		0xe8bd4003, // pop {r0-r1, lr}
+		0xe3a05cff, // mov r5, #0xff00
+		0xe5845024, // str r5, [r4, #0x24]
 		0xe12fff1e, // bx lr
 	};
 	
@@ -890,10 +892,15 @@ static void EnchantIOP(void) {
 	// broadon was cursed to never write secure code, amirite
 	IOS_Ioctlv(hSha, 0, 1, 2, vec);
 	// wait for context switch to idle thread
-	sleep(1);
+	//sleep(1);
+	for (int i = 0; i < 1000000; i++) {
+		if (read32(0xCD800024) == 0xFF00) break;
+		udelay(1);
+	}
 	IOS_Close(hSha);
 	
 	// make sure it worked
+	write32(0xCD800024, 0);
 	if (read32(0xCD800064) != 0xFFFFFFFF) {
 		return;
 	}
@@ -986,7 +993,7 @@ static void EnchantIOP(void) {
 	vec2[2].len = 0x20;
 	
 	// wait for ios to fully come up
-	sleep(1);
+	//sleep(1);
 	
 	// close libogc IOS handles
 	__IOS_ShutdownSubsystems();
