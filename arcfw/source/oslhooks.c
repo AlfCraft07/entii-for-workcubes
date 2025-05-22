@@ -61,7 +61,7 @@ typedef enum {
 
 typedef enum {
     AOT_NONE,
-    AOT_STWCX,
+    AOT_STWCX
 } INSTRUCTION_AOT_TYPE;
 
 // Define ARC boot library structures used here.
@@ -556,7 +556,8 @@ static ARC_STATUS FindLengthOfCodeTable(ULONG FileId, PIMAGE_SECTION_HEADER Sect
 
         // Walk through all instructions, looking for stwcx instructions.
         PU32LE Instruction = (PU32LE)CodeScratch;
-        for (ULONG i = 0; i < Sections[Section].SizeOfRawData / sizeof(ULONG); i++) {
+        ULONG CountInstructions = Sections[Section].SizeOfRawData / sizeof(ULONG);
+        for (ULONG i = 0; i < CountInstructions; i++) {
             ULONG RealIndex = i;
             ULONG AotLength = InstructionNeedsAot(Instruction[RealIndex].v, &AotType);
             if (AotLength != 0) {
@@ -740,8 +741,9 @@ static ARC_STATUS PePatch_Relocate(PPE_PATCH_ENTRY Patch) {
                     ULONG additionalLen = ptrStart - additionalStart;
                     PULONG additionalLittle = (PULONG)additionalStart;
                     ULONG additionalOffset = TableSectionStart - additionalStart;
+                    ULONG additionalCount = additionalLen / sizeof(ULONG);
 
-                    for (ULONG off = 0; off < additionalLen / sizeof(ULONG); off++, additionalOffset -= sizeof(ULONG)) {
+                    for (ULONG off = 0; off < additionalCount; off++, additionalOffset -= sizeof(ULONG)) {
                         if (additionalOffset > INT32_MAX) {
                             // ???
                             return 10100;
@@ -768,7 +770,8 @@ static ARC_STATUS PePatch_Relocate(PPE_PATCH_ENTRY Patch) {
                 }
             }
 
-            for (ULONG off = 0; off < funcLen / sizeof(ULONG); off++, TableOffsetFromInstruction -= sizeof(ULONG)) {
+            ULONG funcCount = funcLen / sizeof(ULONG);
+            for (ULONG off = 0; off < funcCount; off++, TableOffsetFromInstruction -= sizeof(ULONG)) {
                 if (TableOffsetFromInstruction > INT32_MAX) {
                     // ???
                     return 10102;
@@ -795,6 +798,12 @@ static ARC_STATUS PePatch_Relocate(PPE_PATCH_ENTRY Patch) {
 
 
         if (s_IsLoadingNtKernel) {
+            // Copy 0x500 (external interrupt handler) to 0x1700 (espresso IPI handler)
+            // Most older multiprocessor powerpc systems handle IPIs as an external interrupt.
+            // Therefore, let's do the same.
+            memcpy((PVOID)((ULONG)s_NtKernelReal0 + 0x1700), (PVOID)((ULONG)s_NtKernelReal0 + 0x500), 0x100);
+
+
             // Deal with stwcx instructions in real0
             for (ULONG addr = (ULONG)s_NtKernelReal0; addr < (ULONG)s_NtKernelReal0End; addr += 4) {
                 PPPC_INSTRUCTION insn = (PPPC_INSTRUCTION)addr;
@@ -1455,7 +1464,9 @@ void OslHookInit(PVOID BlOpen, PVOID BlFileTable, PVOID BlSetupForNt, PVOID BlRe
     // stwcx rS,rA,rB to dcbst rA,rB ; stwcx rS,rA,rB - patching in a branch to a code cave (one created by extra PE section) as required.
     // This is to work around a hardware erratum on multiprocessor Espresso.
     // When NT is booted, the HAL can hook the kernel's PE loader to do the same thing.
-    // Cache coherency is broken on wiimode Espresso, so only a single core can run in that scenario.
+    
+    // On wiimode Espresso, the multicore coherency hardware gets disabled by the bootrom (and reverting that register change causes PPC to hang),
+    // so only a single core can run in that scenario. (2 cores very unstable - hang in text setup - 3 cores even more unstable - hang when initialising text setup)
     ULONG Pvr;
     __asm__ __volatile__("mfpvr %0" : "=r"(Pvr));
     Pvr >>= 16;
